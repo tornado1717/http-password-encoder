@@ -64,16 +64,19 @@ function effectivelyCommentedOut1 {
 
 	#################### params via --data ... and URL
 
-	#echo -e "${hcol}#####" $rootCurlCmd \
-	#	--data "dataParam1=dP1Val" --data "bothParam1=bP1DVal1&dataParam2=dP2Val" --data "bothParam1=bP1DVal2" \
-	#	"$rootURL/hash?urlParam1=uP1Val&bothParam1=bP1UVal1&urlParam2=uP2Val&bothParam1=bP1UVal2" \
-	#	$rcol
-	#$rootCurlCmd \
-	#	--data "dataParam1=dP1Val" --data "bothParam1=bP1DVal1&dataParam2=dP2Val" --data "bothParam1=bP1DVal2" \
-	#	"$rootURL/hash?urlParam1=uP1Val&bothParam1=bP1UVal1&urlParam2=uP2Val&bothParam1=bP1UVal2"
+	echo -e "${hcol}#####" $rootCurlCmd \
+		--data "dataParam1=dP1Val" --data "bothParam1=bP1DVal1&dataParam2=dP2Val" --data "bothParam1=bP1DVal2" \
+		"$rootURL/hash?urlParam1=uP1Val&bothParam1=bP1UVal1&urlParam2=uP2Val&bothParam1=bP1UVal2" \
+		$rcol
+	$rootCurlCmd \
+		--data "dataParam1=dP1Val" --data "bothParam1=bP1DVal1&dataParam2=dP2Val" --data "bothParam1=bP1DVal2" \
+		"$rootURL/hash?urlParam1=uP1Val&bothParam1=bP1UVal1&urlParam2=uP2Val&bothParam1=bP1UVal2"
 
 
 
+# The example command from the assignment:
+echo -e "${hcol}#####" $rootCurlCmd --data "password=angryMonkey" $rootURL/hash $rcol
+$rootCurlCmd                        --data "password=angryMonkey" $rootURL/hash
 
 
 

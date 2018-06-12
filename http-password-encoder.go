@@ -14,6 +14,9 @@ import (
 	"io/ioutil"
 	"flag"
 	"net/http"
+	"net/url"
+//	"strings"
+//	"bytes"  // needed to implement getIOReaderLen()
 )
 
 
@@ -21,16 +24,81 @@ import (
 // Global Constants
 ///////////////////////////////////////////////////////////////////////////////
 
-const pcol string = "\x1B[32m"
-const hcol string = "\x1B[33m"
-const rcol string = "\x1B[0m"
+const (
+	pcol = "\x1B[32m"
+	hcol = "\x1B[33m"
+	rcol = "\x1B[0m"
+)
 
 
 ///////////////////////////////////////////////////////////////////////////////
 // Funcs
 ///////////////////////////////////////////////////////////////////////////////
 
-func printRequest(indent string, req *http.Request) {
+/*
+			func getIOReaderLen(rc io.ReadCloser) (int64) {
+				// Modified from https://stackoverflow.com/questions/39064343/how-to-get-the-size-of-an-io-reader-object
+				//	"Since io.Reader interface doesn't know anything about size or length of underlying data..."
+				//		Ex: a Reader's data could be coming from a stream -> unknown final length
+				//	I think they chose io.Copy() over io.Read...() since it uses the correct option between "src.WriteTo(dst)" and "dst.ReadFrom(src)"
+				// Also see:
+				//	https://stackoverflow.com/questions/30910487/why-an-io-reader-after-read-it-became-empty-in-golang
+
+				tmpBuf := &bytes.Buffer{}  // Need a type (like bytes.Buffer) that can be used as an io.Writer (something that implements Write())
+				nRead, err := io.Copy(tmpBuf, rc)
+				if err != nil {
+					fmt.Println(err)
+				}
+
+				return nRead // effectively len(rc)
+			}
+			//func len()
+			/*func (rc *io.Reader) Len() int {
+				return 0
+			} * /
+*/
+
+// This handles requests that weren't sent according to the project spec -
+// browsers vs various curl parameters vs whatever other clients
+func parseURLParams(req *http.Request, bodyData *[]byte) (url.Values, error) {
+		fmt.Println("    len(req.URL.RawQuery) =", len(req.URL.RawQuery))
+//		fmt.Println("    getIOReaderLen(req.Body) =", getIOReaderLen(req.Body))
+		fmt.Println("    len(*bodyData) =", len(*bodyData))
+
+	var queryVals url.Values
+	var err error
+
+	if (len(req.URL.RawQuery) > 0) {
+		var err error
+		queryVals, err = url.ParseQuery(req.URL.RawQuery)
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
+	//} else if ((&req.Body).Len() > 0) {
+	//} else if (len(req.Body) > 0) {
+	//} else if (getIOReaderLen(req.Body) > 0) {
+	} else if (len(*bodyData) > 0) {
+		/*bodyData, err := ioutil.ReadAll(req.Body)
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		} */
+
+		queryVals, err = url.ParseQuery(string(*bodyData))
+		if err != nil {
+			log.Fatal(err)
+			return nil, err
+		}
+	}
+
+	//a := "abc"
+	//fmt.Printf("%T, %v, %s, %d", a, a, a, a.Len())
+
+	return queryVals, nil
+}
+
+func printRequest(indent string, req *http.Request, bodyData *[]byte) {
 	fmt.Print(indent,       "req.Method='"    , req.Method    ,       "'\n")
 	fmt.Print(indent,       "req.URL.*\n")
 	fmt.Print(indent,       "    *.Scheme='"    , req.URL.Scheme    ,       "'\n")
@@ -47,13 +115,28 @@ func printRequest(indent string, req *http.Request) {
 	fmt.Print(indent,       "req.ProtoMinor='", req.ProtoMinor,       "'\n")
 	fmt.Print(indent,       "req.Header='"    , req.Header    ,       "'\n")
 	fmt.Print(indent,       "req.Body='"      , req.Body      ,       "'\n")
-	{
+	fmt.Print(indent,       "req.Body='"      , req.Body      ,       "'\n")
+/*	{  // req.Body is an io.ReadCloser which is strictly read-once so special handling is required
 		b, err := ioutil.ReadAll(req.Body)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("%s    %s\n", indent, b)
-	}
+		fmt.Printf("%s    '%s'\n", indent, b)
+
+		b, err = ioutil.ReadAll(req.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("%s    '%s'\n", indent, b)
+
+		b, err = ioutil.ReadAll(req.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("%s    '%s'\n", indent, b)
+	} */
+	fmt.Print(indent,       "    -> '"              ,         bodyData    ,       "'\n")
+	fmt.Print(indent,       "    -> '"              , string(*bodyData)   ,       "'\n")
 //	fmt.Print(indent,       "req.GetBody()='"       , req.GetBody()       ,       "'\n")
 	fmt.Print(indent,       "req.ContentLength='"   , req.ContentLength   ,       "'\n")
 	fmt.Print(indent,       "req.TransferEncoding='", req.TransferEncoding,       "'\n")
@@ -73,30 +156,51 @@ func printRequest(indent string, req *http.Request) {
 //		log.Fatal(err)
 //	}
 //	fmt.Printf("%s", b)
+
+	fmt.Println()
+	queryVals, err := parseURLParams(req, bodyData)
+	fmt.Print(indent,       "extracted query params:",       "\n")
+	fmt.Print(indent,       "    error: ", err, "\n")
+	fmt.Print(indent, hcol, "    queryVals: ", queryVals, rcol, "\n")
+}
+
+// Handle a few things all requests have in common:
+//	* Parse any parameters given in the URL (and search the body for them if some client puts them in there for some reason).
+//	* Retrieve all data from req.Body since it is an io.ReadCloser which is strictly read-once.  Data is placed into bodyData.
+//	* Some general logging statements.
+func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTag string, bodyData *[]byte) () {
+	io.WriteString(w, fmt.Sprint("Message from the ", callerNameTag, " request handler via io.WriteString\n"))
+	fmt.Fprint    (w,            "Message from the ", callerNameTag, " request handler via fmt.Fprint\n")
+
+	// Do the one time read of req.Body data
+	var err error
+	*bodyData, err = ioutil.ReadAll(req.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Body.Close()  // the server (this) is responsible for doing this
+	//fmt.Printf("%s    '%s'\n", indent, bodyData)
+
+	fmt.Print(pcol, callerNameTag, " handler:", rcol, "\n")
+	printRequest("    : ", req, bodyData)
 }
 
 func handleGeneralRequest(w http.ResponseWriter, req *http.Request) {
-	io.WriteString(w, "Message from the general request handler via io.WriteString\n")
-	fmt.Fprint    (w, "Message from the general request handler via fmt.Fprint\n")
-	fmt.Print(pcol, "general handler:", rcol, "\n")
-	printRequest("    : ", req)
+	var bodyData []byte
+	processRequestCommon(w, req, "general", &bodyData)
 }
 
-func hashRequested_rootOnly(w http.ResponseWriter, req *http.Request) {
-	io.WriteString(w, "Special message from the root-only hash handler via io.WriteString\n")
-	fmt.Fprint    (w, "Special message from the root-only hash handler via fmt.Fprint\n")
-	fmt.Print(pcol, "root-only hash handler:", rcol, "\n")
-	printRequest("    : ", req)
+func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
+	var bodyData []byte
+	processRequestCommon(w, req, "root-only hash", &bodyData)
 }
 
-func hashRequested(w http.ResponseWriter, req *http.Request) {
-	io.WriteString(w, "Special message from the hash handler via io.WriteString\n")
-	fmt.Fprint    (w, "Special message from the hash handler via fmt.Fprint\n")
-	fmt.Print(pcol, "hash handler:", rcol, "\n")
-	printRequest("    : ", req)
+func handleHashRequest(w http.ResponseWriter, req *http.Request) {
+	var bodyData []byte
+	processRequestCommon(w, req, "hash handler", &bodyData)
 }
 
-func ignoreRequest(w http.ResponseWriter, req *http.Request) {
+func handleIgnoredRequest(w http.ResponseWriter, req *http.Request) {
 	fmt.Print(pcol, "handler was called for a request that is being ignored..., req.URL.Path=", req.URL.Path, rcol, "\n")
 }
 
@@ -112,9 +216,9 @@ func main() {
 	)
 	fmt.Print("Creating server on port ", *serverPort, "\n")
 
-	http.HandleFunc("/favicon.ico", ignoreRequest)
-	http.HandleFunc("/hash/", hashRequested)
-	http.HandleFunc("/hash", hashRequested_rootOnly)  // Note: if "/hash/" with a trailing slash is handled and "/hash" isn't and a client goes to "address.../hash" without the trailing slash they'll get a 301 ("Moved Permanently") error
+	http.HandleFunc("/favicon.ico", handleIgnoredRequest)
+	http.HandleFunc("/hash/", handleHashRequest)
+	http.HandleFunc("/hash", handleHashRequest_rootOnly)  // Note: if "/hash/" with a trailing slash is handled and "/hash" isn't and a client goes to "address.../hash" without the trailing slash they'll get a 301 ("Moved Permanently") error
 	http.HandleFunc("/", handleGeneralRequest)
 	http.HandleFunc("//", handleGeneralRequest)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", *serverPort), nil))
