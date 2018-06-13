@@ -15,6 +15,8 @@ import (
 	"flag"
 	"net/http"
 	"net/url"
+	"time"
+	"os"
 )
 
 
@@ -78,8 +80,18 @@ func printRequest(indent string, req *http.Request, bodyData *[]byte) {
 	fmt.Print(indent,       "req.TransferEncoding='", req.TransferEncoding,       "'\n")
 	fmt.Print(indent,       "req.Close='"           , req.Close           ,       "'\n")
 	fmt.Print(indent,       "req.Host='"            , req.Host            ,       "'\n")
-	fmt.Print(indent,       "req.Form='"            , req.Form            ,       "'\n")
-	fmt.Print(indent,       "req.PostForm='"        , req.PostForm        ,       "'\n")
+	fmt.Print(indent,       "req.Host='"            , req.Host            ,       "'\n")
+	fmt.Print(indent,       "<before req.ParseForm()>:\n")
+	fmt.Print(indent,       "    req.Form='"            , req.Form            ,       "'\n")
+	fmt.Print(indent,       "    req.PostForm='"        , req.PostForm        ,       "'\n")
+	req.ParseForm()  // It seems that this only reads the URL parameters and NOT params that were thrown into the body
+	fmt.Print(indent,       "<after req.ParseForm()>:\n")
+	fmt.Print(indent,       "    req.Form='"            , req.Form            ,       "'\n")
+	fmt.Print(indent,       "    req.PostForm='"        , req.PostForm        ,       "'\n")
+	req.ParseMultipartForm(0x1000)
+	fmt.Print(indent,       "<after req.ParseMultipartForm()>:\n")
+	fmt.Print(indent,       "    req.Form='"            , req.Form            ,       "'\n")
+	fmt.Print(indent,       "    req.PostForm='"        , req.PostForm        ,       "'\n")
 	fmt.Print(indent,       "req.MultipartForm='"   , req.MultipartForm   ,       "'\n")
 	fmt.Print(indent,       "req.Trailer='"         , req.Trailer         ,       "'\n")
 	fmt.Print(indent,       "req.RemoteAddr='"      , req.RemoteAddr      ,       "'\n")
@@ -108,6 +120,8 @@ func printRequest(indent string, req *http.Request, bodyData *[]byte) {
 //	* Retrieve all data from req.Body since it is an io.ReadCloser which is strictly read-once.  Data is placed into bodyData.
 //	* Some general logging statements.
 func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTag string, bodyData *[]byte) {
+	startTime := time.Now()
+
 	io.WriteString(w, fmt.Sprint("Message from the ", callerNameTag, " request handler via io.WriteString\n"))
 	fmt.Fprint    (w,            "Message from the ", callerNameTag, " request handler via fmt.Fprint\n")
 
@@ -121,8 +135,18 @@ func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTa
 	}
 	req.Body.Close()  // the server (this) is responsible for doing this
 
+	logTag := fmt.Sprintf("==%d:0xXXXXXXXX== %s %s",
+		os.Getpid(),
+		//os.GetGoRoutineID() or os.GetThreadID()  // Doesn't exist. See: https://github.com/golang/go/issues/22770
+		startTime.Format("2006-01-02 15:04:05.000000000"),
+		callerNameTag,
+	)
 	fmt.Print(pcol, callerNameTag, " handler:", rcol, "\n")
-	printRequest("    : ", req, bodyData)
+	printRequest(logTag+"    : ", req, bodyData)
+
+	fmt.Println(logTag+"    <sleeping>")
+	time.Sleep(5 * time.Second)
+	fmt.Println(logTag+"    <done sleeping>")
 }
 
 func handleGeneralRequest(w http.ResponseWriter, req *http.Request) {
@@ -137,7 +161,7 @@ func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 
 func handleHashRequest(w http.ResponseWriter, req *http.Request) {
 	var bodyData []byte
-	processRequestCommon(w, req, "hash handler", &bodyData)
+	processRequestCommon(w, req, "hash", &bodyData)
 }
 
 func handleIgnoredRequest(w http.ResponseWriter, req *http.Request) {

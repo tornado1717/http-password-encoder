@@ -28,6 +28,7 @@ function effectivelyCommentedOut1 {
 	$rootCurlCmd                        $rootURL/hash/1
 	echo -e "${hcol}#####" $rootCurlCmd $rootURL/hash/1/ $rcol
 	$rootCurlCmd                        $rootURL/hash/1/
+}
 
 
 	#################### params via --data ...
@@ -70,7 +71,6 @@ function effectivelyCommentedOut1 {
 	$rootCurlCmd \
 		--data "dataParam1=dP1Val" --data "bothParam1=bP1DVal1&dataParam2=dP2Val" --data "bothParam1=bP1DVal2" \
 		"$rootURL/abc?urlParam1=uP1Val&bothParam1=bP1UVal1&urlParam2=uP2Val&bothParam1=bP1UVal2"
-}
 
 
 
