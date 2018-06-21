@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"time"
 	"os"
+	"context"
 )
 
 
@@ -185,6 +186,30 @@ func main() {
 	http.HandleFunc("/hash/", handleHashRequest)
 	http.HandleFunc("/hash", handleHashRequest_rootOnly)  // Note: if "/hash/" with a trailing slash is handled and "/hash" isn't and a client goes to "address.../hash" without the trailing slash they'll get a 301 ("Moved Permanently") error
 	http.HandleFunc("/", handleGeneralRequest)  // If this doesn't happen, the default handler just returns "404 page not found"
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", *serverPort), nil))
-	fmt.Println("Server created...")
+	shutdownRequested := make(chan struct{})
+	handleShutdownRequest := func(w http.ResponseWriter, req *http.Request) {
+		close(shutdownRequested)
+	}
+	http.HandleFunc("/shutdown", handleShutdownRequest)
+	http.HandleFunc("/shutdown/", handleShutdownRequest)
+
+	server := &http.Server{Addr: fmt.Sprintf(":%s", *serverPort)}
+	shutdownComplete := make(chan struct{})
+	go func() {
+		err := server.ListenAndServe()
+		if err != nil {
+			log.Printf("HTTP server ListenAndServe: %v", err)
+		}
+		close(shutdownComplete)
+		log.Println("Server created and then shutdown...")
+	}()
+
+	<- shutdownRequested
+	fmt.Println("Shutting down server...")
+	if err := server.Shutdown(context.Background()); err != nil {
+		// Error from closing listeners, or context timeout:
+		log.Printf("HTTP server Shutdown: %v", err)
+	}
+
+	<- shutdownComplete  // Wait for the shutdown to finish
 }

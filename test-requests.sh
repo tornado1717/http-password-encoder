@@ -28,7 +28,6 @@ function effectivelyCommentedOut1 {
 	$rootCurlCmd                        $rootURL/hash/1
 	echo -e "${hcol}#####" $rootCurlCmd $rootURL/hash/1/ $rcol
 	$rootCurlCmd                        $rootURL/hash/1/
-}
 
 
 	#################### params via --data ...
@@ -71,6 +70,7 @@ function effectivelyCommentedOut1 {
 	$rootCurlCmd \
 		--data "dataParam1=dP1Val" --data "bothParam1=bP1DVal1&dataParam2=dP2Val" --data "bothParam1=bP1DVal2" \
 		"$rootURL/abc?urlParam1=uP1Val&bothParam1=bP1UVal1&urlParam2=uP2Val&bothParam1=bP1UVal2"
+}
 
 
 
@@ -78,6 +78,13 @@ function effectivelyCommentedOut1 {
 echo -e "${hcol}#####" $rootCurlCmd --data "password=angryMonkey" $rootURL/hash $rcol
 $rootCurlCmd                        --data "password=angryMonkey" $rootURL/hash
 
+
+# The example shutdown command from the assignment:
+echo -e "${hcol}#####" $rootCurlCmd $rootURL/shutdown $rcol
+$rootCurlCmd                        $rootURL/shutdown
+	# Duplicate shutdown command to test multiple requests - this should not get a response back
+	echo -e "${hcol}#####" $rootCurlCmd $rootURL/shutdown $rcol
+	$rootCurlCmd                        $rootURL/shutdown
 
 
 #echo
