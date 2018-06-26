@@ -197,7 +197,7 @@ func main() {
 	http.HandleFunc("/hash/", handleHashRequest)
 	http.HandleFunc("/hash", handleHashRequest_rootOnly)  // Note: if "/hash/" with a trailing slash is handled and "/hash" isn't and a client goes to "address.../hash" without the trailing slash they'll get a 301 ("Moved Permanently") error
 	http.HandleFunc("/", handleGeneralRequest)  // If this doesn't happen, the default handler just returns "404 page not found"
-	shutdownRequested := make(chan struct{})
+	shutdownRequested := make(chan string)
 	handleShutdownRequest := func(w http.ResponseWriter, req *http.Request) {
 		close(shutdownRequested)
 	}
@@ -205,22 +205,38 @@ func main() {
 	http.HandleFunc("/shutdown/", handleShutdownRequest)
 
 	server := &http.Server{Addr: fmt.Sprintf(":%s", *serverPort)}
+
+	// Tell the server not to reuse underlying TCP connections - makes server shutdown quick
+	//	since none of the requests leave connections around that need to time out and this
+	//	application probably doesn't benefit much from reuse of connections anyways due to its
+	//	small data usage per request
+	// Note/TODO: this can cause "TIME_WAIT" connections to be left around - is this a problem?
+	//	See: http://www.serverframework.com/asynchronousevents/2011/01/time-wait-and-its-design-implications-for-protocols-and-scalable-servers.html
+	server.SetKeepAlivesEnabled(false)
+
+	const serverInitError = "Initialization error"
 	shutdownComplete := make(chan struct{})
 	go func() {
 		err := server.ListenAndServe()
 		if err != nil {
 			log.Printf("HTTP server ListenAndServe: %v", err)
+			if err != http.ErrServerClosed {
+				shutdownRequested <- serverInitError
+				close(shutdownRequested)
+			}
 		}
 		close(shutdownComplete)
 		log.Println("Server created and then shutdown...")
 	}()
 
-	<- shutdownRequested
-	log.Println("Shutting down server...")
-	if err := server.Shutdown(context.Background()); err != nil {
-		// Error from closing listeners, or context timeout:
-		log.Printf("HTTP server Shutdown: %v", err)
-	}
+	shutdownRequestCause := <- shutdownRequested
+	if shutdownRequestCause != serverInitError {
+		log.Println("Shutting down server...")
+		if err := server.Shutdown(context.Background()); err != nil {
+			// Error from closing listeners, or context timeout:
+			log.Printf("HTTP server Shutdown: %v", err)
+		}
 
-	<- shutdownComplete  // Wait for the shutdown to finish
+		<- shutdownComplete  // Wait for the shutdown to finish
+	}
 }
