@@ -77,6 +77,23 @@ function effectivelyCommentedOut1 {
 # The example command from the assignment:
 echo -e "${hcol}#####" $rootCurlCmd --data "password=angryMonkey" $rootURL/hash $rcol
 $rootCurlCmd                        --data "password=angryMonkey" $rootURL/hash
+sleep 1
+
+echo -e "${hcol}#####" $rootCurlCmd --data "password=pass2" $rootURL/hash/ $rcol
+$rootCurlCmd                        --data "password=pass2" $rootURL/hash/
+
+echo -e "${hcol}#####" "< in a browser like Chrome, go to: $rootURL/hash?password=pass3 >" $rcol
+
+echo -e "${hcol}#####" $rootCurlCmd $rootURL/hash/1 $rcol
+$rootCurlCmd                        $rootURL/hash/1
+
+echo -e "${hcol}#####" $rootCurlCmd $rootURL/hash/1/ $rcol
+$rootCurlCmd                        $rootURL/hash/1/
+sleep 5
+
+echo -e "${hcol}#####" $rootCurlCmd $rootURL/hash/1/ $rcol
+$rootCurlCmd                        $rootURL/hash/1/
+sleep 1
 
 
 # The example shutdown command from the assignment:

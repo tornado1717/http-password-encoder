@@ -13,10 +13,12 @@ import (
 	"fmt"; "log"; "io"
 	"io/ioutil"
 	"flag"
-	"net/http"
-	"net/url"
-	"context"
+	"net/http"; "net/url"
+	"context"; "sync"
 	"math/rand"
+	"time"
+	"crypto/sha512"; "encoding/base64"
+	"regexp"; "strconv"
 )
 
 
@@ -29,6 +31,15 @@ const (
 	hcol = "\x1B[33m"  // makes text dark yellow on a terminal
 	rcol = "\x1B[0m"   // reset text colors
 )
+
+var passwordDataMutex sync.RWMutex
+
+type passwordDataElement struct {
+	requestedTime time.Time
+	encodedPasswordHash string
+}
+
+var passwordData []passwordDataElement
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -59,7 +70,7 @@ func parseURLParams(req *http.Request, bodyData *[]byte) (url.Values, error) {
 
 	queryVals, err := url.ParseQuery(possibleURLParams)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
 		return nil, err
 	}
 	return queryVals, nil
@@ -111,14 +122,16 @@ func printRequest(indent string, req *http.Request, bodyData *[]byte) {
 //	log.Print(indent,       "req.Response='"        , req.Response        ,       "'\n")
 //	b, err := ioutil.ReadAll(Response.Body)
 //	if err != nil {
-//		log.Fatal(err)
+//		log.Print(err)
+//		return
 //	}
 //	log.Printf("%s", b)
 
-	log.Println()
+	log.Println(indent, "-----")
 	queryVals, err := parseURLParams(req, bodyData)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 	log.Print(indent,       "extracted query params:",       "\n")
 	log.Print(indent,       "    error: ", err, "\n")
@@ -139,7 +152,8 @@ func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTa
 	*bodyData, err = ioutil.ReadAll(req.Body)
 	if err != nil {
 		// TODO: what if this doesn't return EOF
-		log.Fatal(fmt.Sprint(logTag, err))
+		log.Print(fmt.Sprint(logTag, err))
+		return
 	}
 	req.Body.Close()  // the server (this) is responsible for doing this
 
@@ -162,16 +176,76 @@ func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 	callerNameTag := "root-only hash"
 	logTag := generateGoRoutineIDTag() + " " + callerNameTag
 
+	startTime := time.Now()
+
 	var bodyData []byte
 	processRequestCommon(w, req, callerNameTag, logTag, &bodyData)
+	queryVals, err := parseURLParams(req, &bodyData)
+	if err != nil {
+		log.Print(fmt.Sprint(logTag, err))
+		return
+	}
+
+	paramVals, paramExists := queryVals["password"]
+	if (paramExists) {
+		pwPlainText := paramVals[0]
+		hashVal := sha512.Sum512([]byte(pwPlainText))
+
+		passwordDataMutex.Lock()
+		passwordData = append(passwordData, passwordDataElement{
+			requestedTime: startTime,
+			encodedPasswordHash: base64.StdEncoding.EncodeToString(hashVal[:]),
+		})
+		passID := len(passwordData)
+		passwordDataMutex.Unlock()
+fmt.Println(len(passwordData), passwordData[len(passwordData)-1].encodedPasswordHash)
+		fmt.Fprint(w, passID, "\n")
+	}
 }
 
-func handleHashRequest(w http.ResponseWriter, req *http.Request) {
-	callerNameTag := "hash"
-	logTag := generateGoRoutineIDTag() + " " + callerNameTag
+func makeFunc_handleHashRequest() func
+	(w http.ResponseWriter, req *http.Request,
+) {
+	compiledNewHashRegex := regexp.MustCompile("/hash/*$")
+	compiledHashIDRegex  := regexp.MustCompile("/hash/([0-9]+)/*$")
 
-	var bodyData []byte
-	processRequestCommon(w, req, callerNameTag, logTag, &bodyData)
+	return func (w http.ResponseWriter, req *http.Request) {
+		if compiledNewHashRegex.MatchString(req.RequestURI) {
+			handleHashRequest_rootOnly(w, req)
+			return
+		} else if matchedStrings := compiledHashIDRegex.FindStringSubmatch(req.RequestURI); len(matchedStrings) == 2 {
+			callerNameTag := "hash"
+			logTag := generateGoRoutineIDTag() + " " + callerNameTag
+
+			i, err := strconv.Atoi(matchedStrings[1])
+			if err != nil {
+				http.NotFound(w, req)  // somehow this didn't translate (the previous regex should have made this impossible) - send 404 response
+				return
+			}
+
+			var encodedPasswordHash string
+			encodedPasswordHashAvailable := false
+			passwordDataMutex.RLock()
+			if (1 <= i) && (i <= len(passwordData)) && (time.Since(passwordData[i-1].requestedTime).Seconds() >= 5) {
+				encodedPasswordHashAvailable = true
+				encodedPasswordHash = passwordData[i-1].encodedPasswordHash
+			}
+			passwordDataMutex.RUnlock()
+
+			if encodedPasswordHashAvailable {
+				var bodyData []byte
+				processRequestCommon(w, req, callerNameTag, logTag, &bodyData)
+				io.WriteString(w, encodedPasswordHash + "\n")
+				return
+			} else {
+				http.NotFound(w, req)  // no pattern matched (no corresponding hash ID available yet) - send 404 response
+				return
+			}
+		} else {
+			http.NotFound(w, req)  // no pattern matched (an invalid ID was given) - send 404 response
+			return
+		}
+	}
 }
 
 func handleIgnoredRequest(w http.ResponseWriter, req *http.Request) {
@@ -193,9 +267,46 @@ func main() {
 	flag.Parse()
 	log.Print("Creating server on port ", *serverPort, "\n")
 
+	// Note:
+	//	If "/hash" without a trailing slash is handled:
+	//		* and "/hash/" isn't and a client goes to:
+	//			"address.../hash/" or
+	//			"address.../hash/any" or
+	//			"address.../hash/any/" or
+	//			"address.../hash/any/thingElse" or
+	//			"address.../hash/any/thingElse/"
+	//			* and "/" is handled
+	//				the request will be handled by the general "/" handler
+	//			* and "/" isn't handled
+	//				they'll get a 404 ("page not found") error sent back to them by this server
+	//	If "/hash/" with a trailing slash is handled:
+	//		* and "/hash" isn't
+	//			* whether or not "/" is and a client goes to:
+	//				*
+	//					"address.../hash" without the trailing slash
+	//					they'll get a 301 ("Moved Permanently") error sent back to them by this server
+	//				*
+	//					"address.../hash/" or
+	//					"address.../hash/any" or
+	//					"address.../hash/any/" or
+	//					"address.../hash/any/thingElse" or
+	//					"address.../hash/any/thingElse/"
+	//					the request will be handled by the "/hash/" handler
+	//			* and "/" isn't and a client goes to:
+	//				<almost anything except "/hash/..." or other specifically handled URLs>
+	//				they'll get a 404 ("page not found") error sent back to them
+	//
+	//	If "/" is handled:
+	//			* and "/" is and a client goes to:
+	//				"address..." or      <- this path will be implicitly changed to have a trailing slash added to it by curl or Chrome or Firefox or ...
+	//				"address.../" or
+	//				"address.../somethingElse" or
+	//				"address.../somethingElseWithSlash/" or
+	//				"address.../whatever/else/with/or/without/trailing/slash"
+	//				the request will be handled by the general "/" handler
 	http.HandleFunc("/favicon.ico", handleIgnoredRequest)
-	http.HandleFunc("/hash/", handleHashRequest)
-	http.HandleFunc("/hash", handleHashRequest_rootOnly)  // Note: if "/hash/" with a trailing slash is handled and "/hash" isn't and a client goes to "address.../hash" without the trailing slash they'll get a 301 ("Moved Permanently") error
+	http.HandleFunc("/hash/", makeFunc_handleHashRequest())
+	http.HandleFunc("/hash", handleHashRequest_rootOnly)
 	http.HandleFunc("/", handleGeneralRequest)  // If this doesn't happen, the default handler just returns "404 page not found"
 	shutdownRequested := make(chan string)
 	handleShutdownRequest := func(w http.ResponseWriter, req *http.Request) {
