@@ -170,7 +170,12 @@ func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTa
 		log.Print(logTag, err)
 		return
 	}
-	req.Body.Close()  // the server (this) is responsible for doing this
+
+	// From the Golang doc at https://golang.org/pkg/net/http/:
+	//	"The HTTP Client's Transport is responsible for calling the Close method"
+	//	"The Server will close the request body. The ServeHTTP Handler does not need to."
+	//	-> We only need to close this if we're a client and not a server
+	//req.Body.Close()
 
 	log.Print(logTag, pcol, " ", callerNameTag, " handler:", rcol, "\n")
 	printRequest(logTag + "    : ", req, bodyData)
