@@ -95,6 +95,9 @@ echo -e "${hcol}#####" $rootCurlCmd $rootURL/hash/1/ $rcol
 $rootCurlCmd                        $rootURL/hash/1/
 sleep 1
 
+echo -e "${hcol}#####" $rootCurlCmd $rootURL/stats $rcol
+$rootCurlCmd                        $rootURL/stats
+
 
 # The example shutdown command from the assignment:
 echo -e "${hcol}#####" $rootCurlCmd $rootURL/shutdown $rcol

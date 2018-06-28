@@ -19,6 +19,7 @@ import (
 	"time"
 	"crypto/sha512"; "encoding/base64"
 	"regexp"; "strconv"
+	"encoding/json"
 )
 
 
@@ -33,13 +34,24 @@ const (
 )
 
 var passwordDataMutex sync.RWMutex
-
 type passwordDataElement struct {
 	requestedTime time.Time
 	encodedPasswordHash string
 }
-
 var passwordData []passwordDataElement
+
+var serverStats struct {
+	sync.RWMutex
+	newHashNumRequests int
+	newHashNSecs int64
+} = struct {
+	sync.RWMutex
+	newHashNumRequests int
+	newHashNSecs int64
+}{
+	newHashNumRequests: 0,
+	newHashNSecs: 0,
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -173,10 +185,10 @@ func handleGeneralRequest(w http.ResponseWriter, req *http.Request) {
 }
 
 func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
+	startTime := time.Now()
+
 	callerNameTag := "root-only hash"
 	logTag := generateGoRoutineIDTag() + " " + callerNameTag
-
-	startTime := time.Now()
 
 	var bodyData []byte
 	processRequestCommon(w, req, callerNameTag, logTag, &bodyData)
@@ -201,6 +213,11 @@ func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 fmt.Println(len(passwordData), passwordData[len(passwordData)-1].encodedPasswordHash)
 		fmt.Fprint(w, passID, "\n")
 	}
+
+	serverStats.Lock()
+	serverStats.newHashNumRequests++
+	serverStats.newHashNSecs += time.Now().Sub(startTime).Nanoseconds()
+	serverStats.Unlock()
 }
 
 func makeFunc_handleHashRequest() func
@@ -250,6 +267,29 @@ func makeFunc_handleHashRequest() func
 
 func handleIgnoredRequest(w http.ResponseWriter, req *http.Request) {
 	log.Print(pcol, "handler was called for a request that is being ignored..., req.URL.Path=", req.URL.Path, rcol, "\n")
+}
+
+func handleStatsRequest(w http.ResponseWriter, req *http.Request) {
+	callerNameTag := "stats"
+	logTag := generateGoRoutineIDTag() + " " + callerNameTag
+	var bodyData []byte
+	processRequestCommon(w, req, "stats", logTag, &bodyData)
+
+	serverStats.RLock()
+	stats := struct {
+		Total int  "total"  // Need to give this a field lable to get "total" to have a lower case name in the JSON output
+		Average float32  "average"  // Ditto for "average"
+	}{
+		Total: serverStats.newHashNumRequests,
+		Average: float32(serverStats.newHashNSecs) / (float32(time.Second) * float32(serverStats.newHashNumRequests)),
+	}
+	serverStats.RUnlock()
+
+	encodedStats, err := json.Marshal(stats)
+fmt.Println("encodedStats:", encodedStats)
+	if err == nil {
+		io.WriteString(w, string(encodedStats) + "\n")
+	}
 }
 
 
@@ -307,6 +347,8 @@ func main() {
 	http.HandleFunc("/favicon.ico", handleIgnoredRequest)
 	http.HandleFunc("/hash/", makeFunc_handleHashRequest())
 	http.HandleFunc("/hash", handleHashRequest_rootOnly)
+	http.HandleFunc("/stats/", handleStatsRequest)
+	http.HandleFunc("/stats", handleStatsRequest)
 	http.HandleFunc("/", handleGeneralRequest)  // If this doesn't happen, the default handler just returns "404 page not found"
 	shutdownRequested := make(chan string)
 	handleShutdownRequest := func(w http.ResponseWriter, req *http.Request) {
