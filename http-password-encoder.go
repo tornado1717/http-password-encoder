@@ -13,7 +13,6 @@ import (
 	"flag"
 	"net/http"; "net/url"
 	"context"; "sync"
-	"math/rand"
 	"time"
 	"crypto/sha512"; "encoding/base64"
 	"regexp"; "strconv"
@@ -24,12 +23,6 @@ import (
 ///////////////////////////////////////////////////////////////////////////////
 // Globals
 ///////////////////////////////////////////////////////////////////////////////
-
-const (
-	pcol = "\x1B[32m"  // makes text dark green on a terminal
-	hcol = "\x1B[33m"  // makes text dark yellow on a terminal
-	rcol = "\x1B[0m"   // reset text colors
-)
 
 var passwordDataMutex sync.RWMutex
 type passwordDataElement struct {
@@ -55,15 +48,6 @@ var serverStats struct {
 ///////////////////////////////////////////////////////////////////////////////
 // Funcs
 ///////////////////////////////////////////////////////////////////////////////
-
-func generateGoRoutineIDTag() string {
-	fgColorCode := rand.Intn(8)
-	bgColorCode := rand.Intn(7)
-	if fgColorCode <= bgColorCode {
-		bgColorCode++
-	}
-	return fmt.Sprint("\x1B[", fgColorCode+30, ";", bgColorCode+40, "m##", rcol)
-}
 
 // This handles requests that weren't sent according to the project spec -
 // browsers vs various curl parameters vs whatever other clients
@@ -91,106 +75,8 @@ func parseURLParams(req *http.Request, bodyData *[]byte) (url.Values, error) {
 	return queryVals, nil
 }
 
-func printRequest(indent string, req *http.Request, bodyData *[]byte) {
-	log.Print(indent,       "req.Method='"    , req.Method    ,       "'\n")
-	log.Print(indent,       "req.URL.*\n")
-	log.Print(indent,       "    *.Scheme='"        , req.URL.Scheme      ,       "'\n")
-	log.Print(indent,       "    *.Opaque='"        , req.URL.Opaque      ,       "'\n")
-	log.Print(indent,       "    *.User='"          , req.URL.User        ,       "'\n")
-	log.Print(indent,       "    *.Host='"          , req.URL.Host        ,       "'\n")
-	log.Print(indent, hcol, "    *.Path='"          , req.URL.Path        , rcol, "'\n")
-	log.Print(indent,       "    *.RawPath='"       , req.URL.RawPath     ,       "'\n")
-	log.Print(indent,       "    *.ForceQuery='"    , req.URL.ForceQuery  ,       "'\n")
-	log.Print(indent, hcol, "    *.RawQuery='"      , req.URL.RawQuery    , rcol, "'\n")
-	log.Print(indent,       "    *.Fragment='"      , req.URL.Fragment    ,       "'\n")
-	log.Print(indent,       "req.Proto='"           , req.Proto           ,       "'\n")
-	log.Print(indent,       "req.ProtoMajor='"      , req.ProtoMajor      ,       "'\n")
-	log.Print(indent,       "req.ProtoMinor='"      , req.ProtoMinor      ,       "'\n")
-	log.Print(indent,       "req.Header='"          , req.Header          ,       "'\n")
-	log.Print(indent,       "req.Body='"            , req.Body            ,       "'\n")
-	log.Print(indent,       "    -> '"              ,         bodyData    ,       "'\n")
-	log.Print(indent,       "    -> '"              , string(*bodyData)   ,       "'\n")
-//	log.Print(indent,       "req.GetBody()='"       , req.GetBody()       ,       "'\n")
-	log.Print(indent,       "req.ContentLength='"   , req.ContentLength   ,       "'\n")
-	log.Print(indent,       "req.TransferEncoding='", req.TransferEncoding,       "'\n")
-	log.Print(indent,       "req.Close='"           , req.Close           ,       "'\n")
-	log.Print(indent,       "req.Host='"            , req.Host            ,       "'\n")
-	log.Print(indent,       "req.Host='"            , req.Host            ,       "'\n")
-	log.Print(indent,       "<before req.ParseForm()>:\n")
-	log.Print(indent,       "    req.Form='"            , req.Form            ,       "'\n")
-	log.Print(indent,       "    req.PostForm='"        , req.PostForm        ,       "'\n")
-// TODO: look at req.FormValue() and req.FormPostValue()
-	req.ParseForm()  // It seems that this only reads the URL parameters and NOT params that were thrown into the body
-	log.Print(indent,       "<after req.ParseForm()>:\n")
-	log.Print(indent,       "    req.Form='"            , req.Form            ,       "'\n")
-	log.Print(indent,       "    req.PostForm='"        , req.PostForm        ,       "'\n")
-	req.ParseMultipartForm(0x1000)
-	log.Print(indent,       "<after req.ParseMultipartForm()>:\n")
-	log.Print(indent,       "    req.Form='"            , req.Form            ,       "'\n")
-	log.Print(indent,       "    req.PostForm='"        , req.PostForm        ,       "'\n")
-	log.Print(indent,       "req.MultipartForm='"   , req.MultipartForm   ,       "'\n")
-	log.Print(indent,       "req.Trailer='"         , req.Trailer         ,       "'\n")
-	log.Print(indent,       "req.RemoteAddr='"      , req.RemoteAddr      ,       "'\n")
-	log.Print(indent, hcol, "req.RequestURI='"      , req.RequestURI      , rcol, "'\n")
-	log.Print(indent,       "req.TLS='"             , req.TLS             ,       "'\n")
-	log.Print(indent,       "req.Cancel='"          , req.Cancel          ,       "'\n")
-//	log.Print(indent,       "req.Response='"        , req.Response        ,       "'\n")
-//	b, err := ioutil.ReadAll(Response.Body)
-//	if err != nil {
-//		log.Print(err)
-//		return
-//	}
-//	log.Printf("%s", b)
-
-	log.Println(indent, "-----")
-	queryVals, err := parseURLParams(req, bodyData)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-	log.Print(indent,       "extracted query params:",       "\n")
-	log.Print(indent,       "    error: ", err, "\n")
-	log.Print(indent, hcol, "    queryVals: ", queryVals, rcol, "\n")
-}
-
-// Handle a few things all requests have in common:
-//	* Parse any parameters given in the URL (and search the body for them if some client puts them in there for some reason).
-//	* Retrieve all data from req.Body since it is an io.ReadCloser which is strictly read-once.  Data is placed into bodyData.
-//	* Some general logging statements.
-func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTag, logTag string, bodyData *[]byte) {
-	io.WriteString(w, fmt.Sprint("Message from the ", callerNameTag, " request handler via io.WriteString\n"))
-	fmt.Fprint    (w,            "Message from the ", callerNameTag, " request handler via fmt.Fprint\n")
-
-	// Do the one time read of req.Body data
-	// TODO: Should we be using (or implementing) req.GetBody() here instead?
-	var err error
-	*bodyData, err = ioutil.ReadAll(req.Body)
-	if err != nil {
-		// TODO: what if this doesn't return EOF
-		log.Print(logTag, err)
-		return
-	}
-
-	// From the Golang doc at https://golang.org/pkg/net/http/:
-	//	"The HTTP Client's Transport is responsible for calling the Close method"
-	//	"The Server will close the request body. The ServeHTTP Handler does not need to."
-	//	-> We only need to close this if we're a client and not a server
-	//req.Body.Close()
-
-	log.Print(logTag, pcol, " ", callerNameTag, " handler:", rcol, "\n")
-	printRequest(logTag + "    : ", req, bodyData)
-
-/*	log.Println(logTag, "    <sleeping>")
-	time.Sleep(5 * time.Second)
-	log.Println(logTag, "    <done sleeping>") */
-}
-
 // Handle requests that weren't sent to one of the pre-defined end points
 func handleGeneralRequest(w http.ResponseWriter, req *http.Request) {
-	callerNameTag := "general"
-	logTag := generateGoRoutineIDTag() + " " + callerNameTag
-	var bodyData []byte
-	processRequestCommon(w, req, "general", logTag, &bodyData)
 	http.NotFound(w, req)
 	fmt.Fprint(w,
 		"The only endpoints available on this server are:\n" +
@@ -204,14 +90,21 @@ func handleGeneralRequest(w http.ResponseWriter, req *http.Request) {
 func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 	startTime := time.Now()
 
-	callerNameTag := "root-only hash"
-	logTag := generateGoRoutineIDTag() + " " + callerNameTag
+	// Do the one time read of req.Body data (it is an io.ReadCloser which is strictly read-once)
+	bodyData, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	// From the Golang doc at https://golang.org/pkg/net/http/:
+	//	"The HTTP Client's Transport is responsible for calling the Close method"
+	//	"The Server will close the request body. The ServeHTTP Handler does not need to."
+	//	-> We only need to close this if we're a client and not a server
+	//req.Body.Close()
 
-	var bodyData []byte
-	processRequestCommon(w, req, callerNameTag, logTag, &bodyData)
 	queryVals, err := parseURLParams(req, &bodyData)
 	if err != nil {
-		log.Print(logTag, err)
+		log.Print(err)
 		return
 	}
 
@@ -227,7 +120,6 @@ func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 		})
 		passID := len(passwordData)
 		passwordDataMutex.Unlock()
-fmt.Println(len(passwordData), passwordData[len(passwordData)-1].encodedPasswordHash)
 		fmt.Fprint(w, passID, "\n")
 	} else {
 		fmt.Fprint(w, "Error: no password given\n")
@@ -252,9 +144,6 @@ func makeFunc_handleHashRequest() func
 			handleHashRequest_rootOnly(w, req)
 			return
 		} else if matchedStrings := compiledHashIDRegex.FindStringSubmatch(req.RequestURI); len(matchedStrings) == 2 {
-			callerNameTag := "hash"
-			logTag := generateGoRoutineIDTag() + " " + callerNameTag
-
 			i, err := strconv.Atoi(matchedStrings[1])
 			if err != nil {
 				http.NotFound(w, req)  // somehow this didn't translate (the previous regex should have made this impossible) - send 404 response
@@ -271,8 +160,6 @@ func makeFunc_handleHashRequest() func
 			passwordDataMutex.RUnlock()
 
 			if encodedPasswordHashAvailable {
-				var bodyData []byte
-				processRequestCommon(w, req, callerNameTag, logTag, &bodyData)
 				io.WriteString(w, encodedPasswordHash + "\n")
 				return
 			} else {
@@ -288,16 +175,11 @@ func makeFunc_handleHashRequest() func
 
 // Handle requests that are to be specifically ignored
 func handleIgnoredRequest(w http.ResponseWriter, req *http.Request) {
-	log.Print(pcol, "handler was called for a request that is being ignored..., req.URL.Path=", req.URL.Path, rcol, "\n")
+	log.Print("handler was called for a request that is being ignored..., req.URL.Path=", req.URL.Path, "\n")
 }
 
 // Returns some server statistics
 func handleStatsRequest(w http.ResponseWriter, req *http.Request) {
-	callerNameTag := "stats"
-	logTag := generateGoRoutineIDTag() + " " + callerNameTag
-	var bodyData []byte
-	processRequestCommon(w, req, "stats", logTag, &bodyData)
-
 	serverStats.RLock()
 	stats := struct {
 		Total int  "total"  // Need to give this a field lable to get "total" to have a lower case name in the JSON output
@@ -309,7 +191,6 @@ func handleStatsRequest(w http.ResponseWriter, req *http.Request) {
 	serverStats.RUnlock()
 
 	encodedStats, err := json.Marshal(stats)
-fmt.Println("encodedStats:", encodedStats)
 	if err == nil {
 		io.WriteString(w, string(encodedStats) + "\n")
 	}
