@@ -3,8 +3,6 @@
 // Example usage:
 //	go run http-password-encoder.go
 //	go run http-password-encoder.go --port=12345
-//	...
-//	See: cmd-line-args__go-example-wrapper.sh
 ///////////////////////////////////////////////////////////////////////////////
 
 package main
@@ -73,6 +71,11 @@ func parseURLParams(req *http.Request, bodyData *[]byte) (url.Values, error) {
 		//fmt.Println("    len(req.URL.RawQuery) =", len(req.URL.RawQuery))
 		//fmt.Println("    len(*bodyData) =", len(*bodyData))
 
+	// Note:
+	//	In the case of browsers (Chrome, Firefox) or "curl http://...<ADDRESS>...?paramName=paramValue",
+	//		the request will be a "GET" request and the parameters will be stored in the URL.RawQuery field
+	//	In the case of "curl --data paramName=paramValue http://...<ADDRESS>...",
+	//		the request will be a "POST" request and the parameters will be stored in the request body
 	var possibleURLParams string
 	if (len(req.URL.RawQuery) > 0) {
 		possibleURLParams = req.URL.RawQuery
@@ -164,7 +167,7 @@ func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTa
 	*bodyData, err = ioutil.ReadAll(req.Body)
 	if err != nil {
 		// TODO: what if this doesn't return EOF
-		log.Print(fmt.Sprint(logTag, err))
+		log.Print(logTag, err)
 		return
 	}
 	req.Body.Close()  // the server (this) is responsible for doing this
@@ -177,13 +180,22 @@ func processRequestCommon(w http.ResponseWriter, req *http.Request, callerNameTa
 	log.Println(logTag, "    <done sleeping>") */
 }
 
+// Handle requests that weren't sent to one of the pre-defined end points
 func handleGeneralRequest(w http.ResponseWriter, req *http.Request) {
 	callerNameTag := "general"
 	logTag := generateGoRoutineIDTag() + " " + callerNameTag
 	var bodyData []byte
 	processRequestCommon(w, req, "general", logTag, &bodyData)
+	http.NotFound(w, req)
+	fmt.Fprint(w,
+		"The only endpoints available on this server are:\n" +
+		"    .../hash - used to encode the provided password\n" +
+		"    .../hash/<passwordID> - this will retrieve the encoded password data once it is available\n" +
+		"    .../stats - this will return a few server statistics in JSON format\n" +
+		"    .../shutdown - gracefully shut down the server.  The server will immediately stop accepting new connections and will wait for all active connections to terminate before shutting down\n")
 }
 
+// Store and encode a new password if provided
 func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 	startTime := time.Now()
 
@@ -194,7 +206,7 @@ func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 	processRequestCommon(w, req, callerNameTag, logTag, &bodyData)
 	queryVals, err := parseURLParams(req, &bodyData)
 	if err != nil {
-		log.Print(fmt.Sprint(logTag, err))
+		log.Print(logTag, err)
 		return
 	}
 
@@ -212,6 +224,8 @@ func handleHashRequest_rootOnly(w http.ResponseWriter, req *http.Request) {
 		passwordDataMutex.Unlock()
 fmt.Println(len(passwordData), passwordData[len(passwordData)-1].encodedPasswordHash)
 		fmt.Fprint(w, passID, "\n")
+	} else {
+		fmt.Fprint(w, "Error: no password given\n")
 	}
 
 	serverStats.Lock()
@@ -220,6 +234,8 @@ fmt.Println(len(passwordData), passwordData[len(passwordData)-1].encodedPassword
 	serverStats.Unlock()
 }
 
+// Returns a request handler function that will return the encoded password corresponding with the ID provided (if available)
+// If no ID was provided, store new password (also if provided)
 func makeFunc_handleHashRequest() func
 	(w http.ResponseWriter, req *http.Request,
 ) {
@@ -265,10 +281,12 @@ func makeFunc_handleHashRequest() func
 	}
 }
 
+// Handle requests that are to be specifically ignored
 func handleIgnoredRequest(w http.ResponseWriter, req *http.Request) {
 	log.Print(pcol, "handler was called for a request that is being ignored..., req.URL.Path=", req.URL.Path, rcol, "\n")
 }
 
+// Returns some server statistics
 func handleStatsRequest(w http.ResponseWriter, req *http.Request) {
 	callerNameTag := "stats"
 	logTag := generateGoRoutineIDTag() + " " + callerNameTag
@@ -300,12 +318,34 @@ fmt.Println("encodedStats:", encodedStats)
 func main() {
 	log.SetFlags(log.Ldate | log.Lmicroseconds | log.Lshortfile)
 
-	var serverPort = flag.String("port",
-		"8080",
+
+	////////////////////
+	// Parse command line parameters
+	////////////////////
+
+	var showHelp = flag.Bool("help",
+		false,
+		"Show help",
+	)
+	var serverPort = flag.Int("port",
+		8080,
 		"Port number for the HTTP password encoder server to use",
 	)
 	flag.Parse()
+	if *showHelp {
+		flag.PrintDefaults()
+		return
+	}
+	if (0 > *serverPort) || (*serverPort > 65535) {
+		fmt.Println("Invalid port number - must be in the range [0, 65535]")
+		return
+	}
 	log.Print("Creating server on port ", *serverPort, "\n")
+
+
+	////////////////////
+	// Initialize settings and handlers for HTTP server
+	////////////////////
 
 	// Note:
 	//	If "/hash" without a trailing slash is handled:
@@ -357,7 +397,7 @@ func main() {
 	http.HandleFunc("/shutdown", handleShutdownRequest)
 	http.HandleFunc("/shutdown/", handleShutdownRequest)
 
-	server := &http.Server{Addr: fmt.Sprintf(":%s", *serverPort)}
+	server := &http.Server{Addr: fmt.Sprintf(":%d", *serverPort)}
 
 	// Tell the server not to reuse underlying TCP connections - makes server shutdown quick
 	//	since none of the requests leave connections around that need to time out and this
@@ -366,6 +406,11 @@ func main() {
 	// Note/TODO: this can cause "TIME_WAIT" connections to be left around - is this a problem?
 	//	See: http://www.serverframework.com/asynchronousevents/2011/01/time-wait-and-its-design-implications-for-protocols-and-scalable-servers.html
 	server.SetKeepAlivesEnabled(false)
+
+
+	////////////////////
+	// Run HTTP server and until a shutdown request comes
+	////////////////////
 
 	const serverInitError = "Initialization error"
 	shutdownComplete := make(chan struct{})
